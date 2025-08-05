@@ -1,0 +1,16 @@
+# ShibuDb Python Client Requirements
+# This client uses only Python standard library modules
+# No external dependencies required
+
+# Python version requirement
+# Python >= 3.7
+
+# Standard library modules used:
+# - json
+# - socket
+# - time
+# - typing
+# - dataclasses
+# - logging
+
+# No external packages required
