@@ -150,7 +150,7 @@ def check_prerequisites():
     required_tools = [
         ('python', 'Python interpreter'),
         ('pip', 'Package installer'),
-        ('build', 'Build tool'),
+        ('python -m build', 'Build tool'),
         ('twine', 'Upload tool')
     ]
     
@@ -160,8 +160,8 @@ def check_prerequisites():
             print(f"✅ {description} is available")
         else:
             print(f"❌ {description} is not available")
-            if tool in ['build', 'twine']:
-                print(f"   Install with: pip install {tool}")
+            if 'build' in tool or tool == 'twine':
+                print(f"   Install with: pip install {tool.split()[-1]}")
             return False
     
     return True

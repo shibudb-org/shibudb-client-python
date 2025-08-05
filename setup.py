@@ -16,7 +16,7 @@ def read_readme():
 
 setup(
     name="shibudb-client",
-    version="1.0.0",
+    version="1.0.1",
     description="A comprehensive Python client for ShibuDb database",
     long_description=read_readme(),
     long_description_content_type="text/markdown",
