@@ -45,7 +45,7 @@ def example_basic_pooling():
             host="localhost",
             port=4444,
             username="admin",
-            password="password",
+            password="admin",
             min_size=2,
             max_size=5
         )
@@ -98,7 +98,7 @@ def example_concurrent_operations():
             host="localhost",
             port=4444,
             username="admin",
-            password="password",
+            password="admin",
             min_size=3,
             max_size=8
         )
@@ -158,7 +158,7 @@ def example_pool_monitoring():
             host="localhost",
             port=4444,
             username="admin",
-            password="password",
+            password="admin",
             min_size=2,
             max_size=6
         )
@@ -284,7 +284,7 @@ def example_pool_configuration():
                 host="localhost",
                 port=4444,
                 username="admin",
-                password="password",
+                password="admin",
                 min_size=config["min_size"],
                 max_size=config["max_size"],
                 acquire_timeout=config["acquire_timeout"]
