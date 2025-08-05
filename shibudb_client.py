@@ -8,14 +8,18 @@ A comprehensive Python client for ShibuDb database that supports:
 - Vector similarity search
 - Space management
 - Connection management
+- Connection pooling
 """
 
 import json
 import socket
 import time
+import threading
 from typing import Dict, List, Optional, Tuple, Union, Any
 from dataclasses import dataclass
 import logging
+from queue import Queue, Empty
+from contextlib import contextmanager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +49,16 @@ class SpaceInfo:
     metric: Optional[str] = None
 
 
+@dataclass
+class ConnectionConfig:
+    """Configuration for database connections"""
+    host: str = "localhost"
+    port: int = 4444
+    timeout: int = 30
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+
 class ShibuDbError(Exception):
     """Base exception for ShibuDb client errors"""
     pass
@@ -65,6 +79,187 @@ class QueryError(ShibuDbError):
     pass
 
 
+class PoolExhaustedError(ShibuDbError):
+    """Raised when connection pool is exhausted"""
+    pass
+
+
+class ConnectionPool:
+    """
+    Connection pool for ShibuDb clients
+    
+    Manages a pool of database connections to improve performance
+    and provide connection reuse capabilities.
+    """
+    
+    def __init__(self, config: ConnectionConfig, min_size: int = 2, max_size: int = 10, 
+                 acquire_timeout: int = 30, health_check_interval: int = 60):
+        """
+        Initialize connection pool
+        
+        Args:
+            config: Connection configuration
+            min_size: Minimum number of connections in pool
+            max_size: Maximum number of connections in pool
+            acquire_timeout: Timeout for acquiring connection (seconds)
+            health_check_interval: Interval for health checks (seconds)
+        """
+        self.config = config
+        self.min_size = min_size
+        self.max_size = max_size
+        self.acquire_timeout = acquire_timeout
+        self.health_check_interval = health_check_interval
+        
+        self._pool = Queue()
+        self._active_connections = 0
+        self._lock = threading.Lock()
+        self._shutdown = False
+        
+        # Initialize pool with minimum connections
+        self._initialize_pool()
+        
+        # Start health check thread
+        self._health_check_thread = threading.Thread(target=self._health_check_worker, daemon=True)
+        self._health_check_thread.start()
+    
+    def _initialize_pool(self):
+        """Initialize the pool with minimum connections"""
+        for _ in range(self.min_size):
+            try:
+                connection = self._create_connection()
+                self._pool.put(connection)
+                self._active_connections += 1
+            except Exception as e:
+                logger.warning(f"Failed to create initial connection: {e}")
+    
+    def _create_connection(self) -> 'ShibuDbClient':
+        """Create a new database connection"""
+        client = ShibuDbClient(
+            host=self.config.host,
+            port=self.config.port,
+            timeout=self.config.timeout
+        )
+        
+        # Authenticate if credentials provided
+        if self.config.username and self.config.password:
+            try:
+                client.authenticate(self.config.username, self.config.password)
+            except AuthenticationError as e:
+                logger.warning(f"Failed to authenticate connection: {e}")
+                client.close()
+                raise
+        
+        return client
+    
+    def _health_check_worker(self):
+        """Background worker for health checks"""
+        while not self._shutdown:
+            time.sleep(self.health_check_interval)
+            self._perform_health_check()
+    
+    def _perform_health_check(self):
+        """Perform health check on pool connections"""
+        with self._lock:
+            # Check if we need to add more connections
+            if self._active_connections < self.min_size:
+                try:
+                    connection = self._create_connection()
+                    self._pool.put(connection)
+                    self._active_connections += 1
+                    logger.debug("Added connection to pool during health check")
+                except Exception as e:
+                    logger.warning(f"Failed to add connection during health check: {e}")
+    
+    @contextmanager
+    def get_connection(self):
+        """
+        Get a connection from the pool
+        
+        Yields:
+            ShibuDbClient: Database client connection
+            
+        Raises:
+            PoolExhaustedError: If no connections available within timeout
+        """
+        connection = None
+        try:
+            # Try to get connection from pool
+            try:
+                connection = self._pool.get(timeout=self.acquire_timeout)
+            except Empty:
+                # Pool is empty, try to create new connection
+                with self._lock:
+                    if self._active_connections < self.max_size:
+                        try:
+                            connection = self._create_connection()
+                            self._active_connections += 1
+                            logger.debug("Created new connection for pool")
+                        except Exception as e:
+                            raise PoolExhaustedError(f"Failed to create new connection: {e}")
+                    else:
+                        raise PoolExhaustedError("Connection pool exhausted")
+            
+            # Test connection health
+            try:
+                # Simple health check - try to list spaces
+                connection.list_spaces()
+            except Exception as e:
+                logger.warning(f"Connection health check failed, creating new connection: {e}")
+                connection.close()
+                connection = self._create_connection()
+            
+            yield connection
+            
+        except Exception as e:
+            if connection:
+                try:
+                    connection.close()
+                except:
+                    pass
+                with self._lock:
+                    self._active_connections -= 1
+            raise
+        else:
+            # Return connection to pool if it's still healthy
+            try:
+                # Quick health check before returning to pool
+                connection.list_spaces()
+                self._pool.put(connection)
+            except Exception as e:
+                logger.warning(f"Connection unhealthy, not returning to pool: {e}")
+                connection.close()
+                with self._lock:
+                    self._active_connections -= 1
+    
+    def close(self):
+        """Close all connections in the pool"""
+        self._shutdown = True
+        
+        # Close all connections in the pool
+        while not self._pool.empty():
+            try:
+                connection = self._pool.get_nowait()
+                connection.close()
+            except Empty:
+                break
+        
+        with self._lock:
+            self._active_connections = 0
+        
+        logger.info("Connection pool closed")
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get pool statistics"""
+        with self._lock:
+            return {
+                "pool_size": self._pool.qsize(),
+                "active_connections": self._active_connections,
+                "min_size": self.min_size,
+                "max_size": self.max_size,
+                "shutdown": self._shutdown
+            }
+
+
 class ShibuDbClient:
     """
     ShibuDb Python Client
@@ -75,9 +270,10 @@ class ShibuDbClient:
     - Vector similarity search
     - Space management
     - Connection management
+    - Connection pooling
     """
 
-    def __init__(self, host: str = "localhost", port: int = 9090, timeout: int = 30):
+    def __init__(self, host: str = "localhost", port: int = 4444, timeout: int = 30):
         """
         Initialize ShibuDb client
 
@@ -575,7 +771,7 @@ class ShibuDbClient:
 
 
 # Convenience functions for quick operations
-def connect(host: str = "localhost", port: int = 9090, username: str = None,
+def connect(host: str = "localhost", port: int = 4444, username: str = None,
             password: str = None, timeout: int = 30) -> ShibuDbClient:
     """
     Create and optionally authenticate a ShibuDb client
@@ -596,3 +792,41 @@ def connect(host: str = "localhost", port: int = 9090, username: str = None,
         client.authenticate(username, password)
 
     return client
+
+
+def create_connection_pool(host: str = "localhost", port: int = 4444, username: str = None,
+                          password: str = None, timeout: int = 30, min_size: int = 2,
+                          max_size: int = 10, acquire_timeout: int = 30,
+                          health_check_interval: int = 60) -> ConnectionPool:
+    """
+    Create a connection pool for ShibuDb clients
+
+    Args:
+        host: Database server host
+        port: Database server port
+        username: Username for authentication
+        password: Password for authentication
+        timeout: Connection timeout in seconds
+        min_size: Minimum number of connections in pool
+        max_size: Maximum number of connections in pool
+        acquire_timeout: Timeout for acquiring connection (seconds)
+        health_check_interval: Interval for health checks (seconds)
+
+    Returns:
+        ConnectionPool: Configured connection pool
+    """
+    config = ConnectionConfig(
+        host=host,
+        port=port,
+        timeout=timeout,
+        username=username,
+        password=password
+    )
+    
+    return ConnectionPool(
+        config=config,
+        min_size=min_size,
+        max_size=max_size,
+        acquire_timeout=acquire_timeout,
+        health_check_interval=health_check_interval
+    )

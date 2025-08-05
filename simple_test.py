@@ -15,8 +15,8 @@ def simple_test():
 
     try:
         # Connect and authenticate
-        client = ShibuDbClient("localhost", 9090)
-        response = client.authenticate("admin", "password")
+        client = ShibuDbClient("localhost", 4444)
+        response = client.authenticate("admin", "admin")
         print(f"✅ Authentication: {response.get('status')}")
 
         # Create a test space
@@ -54,8 +54,8 @@ def vector_test():
 
     try:
         # Connect and authenticate
-        client = ShibuDbClient("localhost", 9090)
-        response = client.authenticate("admin", "password")
+        client = ShibuDbClient("localhost", 4444)
+        response = client.authenticate("admin", "admin")
         print(f"✅ Authentication: {response.get('status')}")
 
         # Create a vector space

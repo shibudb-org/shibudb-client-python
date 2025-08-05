@@ -3,7 +3,7 @@ ShibuDb client library for python
 
 # ShibuDb Python Client
 
-A comprehensive Python client for ShibuDb database that supports authentication, key-value operations, vector similarity search, and space management.
+A comprehensive Python client for ShibuDb database that supports authentication, key-value operations, vector similarity search, space management, and connection pooling.
 
 ## Features
 
@@ -13,6 +13,7 @@ A comprehensive Python client for ShibuDb database that supports authentication,
 - 🗂️ **Space Management**: Create, delete, and manage different storage spaces
 - 🛡️ **Error Handling**: Comprehensive error handling with custom exceptions
 - 📊 **Connection Management**: Automatic connection handling with context managers
+- 🔗 **Connection Pooling**: High-performance connection pooling for concurrent operations
 
 ## Installation
 
@@ -21,7 +22,7 @@ A comprehensive Python client for ShibuDb database that supports authentication,
 1. **ShibuDb Server**: Ensure the ShibuDb server is running
    ```bash
    # Start the server (requires sudo)
-   sudo shibudb start 9090
+   sudo shibudb start 4444
    ```
 
 2. **Python Requirements**: The client uses only standard library modules
@@ -49,13 +50,37 @@ A comprehensive Python client for ShibuDb database that supports authentication,
 from shibudb_client import ShibuDbClient
 
 # Create client and authenticate
-client = ShibuDbClient("localhost", 9090)
-client.authenticate("admin", "password")
+client = ShibuDbClient("localhost", 4444)
+client.authenticate("admin", "admin")
 
 # Use context manager for automatic cleanup
-with ShibuDbClient("localhost", 9090) as client:
-    client.authenticate("admin", "password")
+with ShibuDbClient("localhost", 4444) as client:
+    client.authenticate("admin", "admin")
     # Your operations here
+```
+
+### Connection Pooling
+
+```python
+from shibudb_client import create_connection_pool
+
+# Create a connection pool
+pool = create_connection_pool(
+    host="localhost",
+    port=4444,
+    username="admin",
+    password="admin",
+    min_size=2,
+    max_size=10
+)
+
+# Use pooled connections
+with pool.get_connection() as client:
+    response = client.list_spaces()
+    print(f"Available spaces: {response}")
+
+# Pool automatically manages connections
+pool.close()
 ```
 
 ### Key-Value Operations
@@ -98,7 +123,7 @@ results = client.range_search([0.1, 0.2, 0.3, ...], radius=0.5)
 
 #### Constructor
 ```python
-ShibuDbClient(host="localhost", port=9090, timeout=30)
+ShibuDbClient(host="localhost", port=4444, timeout=30)
 ```
 
 #### Authentication
@@ -169,6 +194,7 @@ class SpaceInfo:
 - `AuthenticationError`: Raised when authentication fails
 - `ConnectionError`: Raised when connection fails
 - `QueryError`: Raised when query execution fails
+- `PoolExhaustedError`: Raised when connection pool is exhausted
 
 ## Examples
 
@@ -179,8 +205,8 @@ from shibudb_client import ShibuDbClient, User
 
 def main():
     # Connect and authenticate
-    with ShibuDbClient("localhost", 9090) as client:
-        client.authenticate("admin", "password")
+    with ShibuDbClient("localhost", 4444) as client:
+        client.authenticate("admin", "admin")
         
         # Create spaces
         client.create_space("users", "key-value")
@@ -210,8 +236,8 @@ if __name__ == "__main__":
 from shibudb_client import ShibuDbClient, AuthenticationError, ConnectionError, QueryError
 
 try:
-    client = ShibuDbClient("localhost", 9090)
-    client.authenticate("admin", "password")
+    client = ShibuDbClient("localhost", 4444)
+    client.authenticate("admin", "admin")
     
     # Your operations here
     
@@ -245,8 +271,8 @@ user = User(
     permissions={"mytable": "read", "vectortable": "write"}
 )
 
-with ShibuDbClient("localhost", 9090) as client:
-    client.authenticate("admin", "password")
+with ShibuDbClient("localhost", 4444) as client:
+    client.authenticate("admin", "admin")
     
     # Create users
     client.create_user(user)
@@ -281,6 +307,99 @@ python simple_test.py
 python example.py
 ```
 
+### Connection Pooling Examples
+```bash
+python pooling_example.py
+```
+
+### Comprehensive Connection Pooling Tests
+```bash
+python comprehensive_pool_test.py
+```
+
+## Connection Pooling
+
+The ShibuDb client supports connection pooling for high-performance concurrent operations. Connection pooling provides:
+
+- **Connection Reuse**: Efficiently reuse database connections
+- **Concurrent Operations**: Support for multiple simultaneous operations
+- **Automatic Health Checks**: Background health monitoring of connections
+- **Configurable Pool Size**: Adjustable minimum and maximum pool sizes
+- **Timeout Handling**: Configurable connection acquisition timeouts
+
+### Pool Configuration
+
+```python
+from shibudb_client import create_connection_pool, ConnectionConfig
+
+# Create pool with custom configuration
+pool = create_connection_pool(
+    host="localhost",
+    port=4444,
+    username="admin",
+    password="admin",
+    min_size=2,              # Minimum connections in pool
+    max_size=10,             # Maximum connections in pool
+    acquire_timeout=30,      # Timeout for acquiring connection (seconds)
+    health_check_interval=60 # Health check interval (seconds)
+)
+```
+
+### Using Connection Pools
+
+```python
+# Basic usage
+with pool.get_connection() as client:
+    response = client.list_spaces()
+    print(f"Spaces: {response}")
+
+# Concurrent operations
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+def worker(worker_id):
+    with pool.get_connection() as client:
+        client.create_space(f"space_{worker_id}", "key-value")
+        client.use_space(f"space_{worker_id}")
+        client.put(f"key_{worker_id}", f"value_{worker_id}")
+        return client.get(f"key_{worker_id}")
+
+# Run concurrent workers
+with ThreadPoolExecutor(max_workers=5) as executor:
+    futures = [executor.submit(worker, i) for i in range(5)]
+    for future in as_completed(futures):
+        result = future.result()
+        print(f"Result: {result}")
+```
+
+### Pool Statistics
+
+```python
+# Get pool statistics
+stats = pool.get_stats()
+print(f"Pool size: {stats['pool_size']}")
+print(f"Active connections: {stats['active_connections']}")
+print(f"Min size: {stats['min_size']}")
+print(f"Max size: {stats['max_size']}")
+```
+
+### Error Handling with Pools
+
+```python
+from shibudb_client import PoolExhaustedError
+
+try:
+    with pool.get_connection() as client:
+        # Your operations here
+        pass
+except PoolExhaustedError as e:
+    print(f"Pool exhausted: {e}")
+except AuthenticationError as e:
+    print(f"Authentication failed: {e}")
+except ConnectionError as e:
+    print(f"Connection failed: {e}")
+```
+
 ## Engine Types
 
 ### Key-Value Engine
@@ -312,7 +431,7 @@ python example.py
 ### Common Issues
 
 1. **Connection Failed**
-    - Ensure ShibuDb server is running: `sudo shibudb start 9090`
+    - Ensure ShibuDb server is running: `sudo shibudb start 4444`
     - Check server port and host settings
     - Verify firewall settings
 

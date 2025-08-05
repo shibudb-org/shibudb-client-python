@@ -38,11 +38,11 @@ def example_authentication():
 
     try:
         # Connect to server
-        client = ShibuDbClient("localhost", 9090)
+        client = ShibuDbClient("localhost", 4444)
 
         # Authenticate (you'll need to provide valid credentials)
         print("Attempting to authenticate...")
-        response = client.authenticate("admin", "password")
+        response = client.authenticate("admin", "admin")
         print_response(response, "Authentication")
 
         return client
@@ -53,7 +53,7 @@ def example_authentication():
         return None
     except ConnectionError as e:
         print(f"❌ Connection failed: {e}")
-        print("Please ensure the ShibuDb server is running on localhost:9090")
+        print("Please ensure the ShibuDb server is running on localhost:4444")
         return None
 
 
@@ -321,7 +321,7 @@ def example_error_handling():
 
     try:
         # Try to authenticate with wrong credentials
-        client = ShibuDbClient("localhost", 9090)
+        client = ShibuDbClient("localhost", 4444)
         client.authenticate("wronguser", "wrongpass")
     except AuthenticationError as e:
         print(f"✅ Caught authentication error: {e}")
@@ -330,8 +330,8 @@ def example_error_handling():
 
     try:
         # Try to use non-existent space
-        client = ShibuDbClient("localhost", 9090)
-        client.authenticate("admin", "password")
+        client = ShibuDbClient("localhost", 4444)
+        client.authenticate("admin", "admin")
         client.use_space("nonexistent")
     except QueryError as e:
         print(f"✅ Caught query error: {e}")
