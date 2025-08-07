@@ -350,7 +350,6 @@ class ShibuDbClient:
 
         if response.get("status") == "OK":
             self.authenticated = True
-            self.current_user = response.get("user", {})
             logger.info(f"Successfully authenticated as {username}")
         else:
             raise AuthenticationError(f"Authentication failed: {response.get('message', 'Unknown error')}")
