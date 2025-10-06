@@ -322,7 +322,7 @@ class ShibuDbClient:
             response = self.socket.recv(4096).decode('utf-8').strip()
 
             try:
-                return json.loads(response)
+                return json.loads(response, strict=False)
             except json.JSONDecodeError:
                 # Handle non-JSON responses (like simple OK messages)
                 return {"status": "OK", "message": response}
