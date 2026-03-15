@@ -3,13 +3,13 @@ ShibuDb client library for python
 
 # ShibuDb Python Client
 
-A comprehensive Python client for ShibuDb database that supports authentication, key-value operations, vector similarity search, space management, and connection pooling.
+A comprehensive Python client for ShibuDb database that supports authentication, key-value operations, vector similarity search (insert, search, get, delete), space management, and connection pooling.
 
 ## Features
 
 - 🔐 **Authentication & User Management**: Secure login with role-based access control
 - 🔑 **Key-Value Operations**: Traditional key-value storage with PUT, GET, DELETE operations
-- 🧮 **Vector Similarity Search**: Advanced vector operations with multiple index types
+- 🧮 **Vector Similarity Search**: Insert, get, delete, and search vectors with multiple index types and metrics
 - 🗂️ **Space Management**: Create, delete, and manage different storage spaces
 - 🛡️ **Error Handling**: Comprehensive error handling with custom exceptions
 - 📊 **Connection Management**: Automatic connection handling with context managers
@@ -116,6 +116,9 @@ print(results["message"])  # Search results
 # Range search
 results = client.range_search([0.1, 0.2, 0.3, ...], radius=0.5)
 
+# Get a vector by ID
+client.get_vector(1)
+
 # Delete a vector by ID
 client.delete_vector(1)
 ```
@@ -153,10 +156,10 @@ client.delete(key: str, space: Optional[str] = None) -> Dict[str, Any]
 #### Vector Operations
 ```python
 client.insert_vector(vector_id: int, vector: List[float], space: Optional[str] = None) -> Dict[str, Any]
-client.search_topk(query_vector: List[float], k: int = 1, space: Optional[str] = None) -> Dict[str, Any]
-client.range_search(query_vector: List[float], radius: float, space: Optional[str] = None) -> Dict[str, Any]
 client.get_vector(vector_id: int, space: Optional[str] = None) -> Dict[str, Any]
 client.delete_vector(vector_id: int, space: Optional[str] = None) -> Dict[str, Any]
+client.search_topk(query_vector: List[float], k: int = 1, space: Optional[str] = None) -> Dict[str, Any]
+client.range_search(query_vector: List[float], radius: float, space: Optional[str] = None) -> Dict[str, Any]
 ```
 
 #### User Management (Admin Only)
@@ -412,7 +415,7 @@ except ConnectionError as e:
 - No dimension required
 
 ### Vector Engine
-- Vector similarity search
+- Vector operations: insert (`insert_vector`), get by ID (`get_vector`), delete by ID (`delete_vector`), and similarity search (`search_topk`, `range_search`)
 - Multiple index types:
     - **Flat**: Exact search (default)
     - **HNSW**: Hierarchical Navigable Small World
