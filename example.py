@@ -233,6 +233,10 @@ def example_vector_operations(client):
         response = client.get_vector(4)
         print_response(response, "Get Vector")
 
+        # Delete a vector
+        response = client.delete_vector(5)
+        print_response(response, "Delete Vector")
+
     except QueryError as e:
         print(f"❌ Vector operation failed: {e}")
 

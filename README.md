@@ -115,6 +115,9 @@ print(results["message"])  # Search results
 
 # Range search
 results = client.range_search([0.1, 0.2, 0.3, ...], radius=0.5)
+
+# Delete a vector by ID
+client.delete_vector(1)
 ```
 
 ## API Reference
@@ -153,6 +156,7 @@ client.insert_vector(vector_id: int, vector: List[float], space: Optional[str] =
 client.search_topk(query_vector: List[float], k: int = 1, space: Optional[str] = None) -> Dict[str, Any]
 client.range_search(query_vector: List[float], radius: float, space: Optional[str] = None) -> Dict[str, Any]
 client.get_vector(vector_id: int, space: Optional[str] = None) -> Dict[str, Any]
+client.delete_vector(vector_id: int, space: Optional[str] = None) -> Dict[str, Any]
 ```
 
 #### User Management (Admin Only)

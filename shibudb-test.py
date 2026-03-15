@@ -195,6 +195,14 @@ def test_vector_operations(client: ShibuDbClient):
         range_result = client.range_search(query_vector, radius=0.5)
         print_result("Range Search", range_result)
 
+        # Test 5: Delete vector
+        print("\n🗑️ Testing delete vector...")
+        delete_result = client.delete_vector(3)
+        print_result("Delete Vector 3", delete_result)
+        get_after_delete = client.get_vector(3)
+        if get_after_delete.get("status") != "OK" or get_after_delete.get("value") is None:
+            print_result("Get after delete (expected missing)", get_after_delete)
+
     except QueryError as e:
         print(f"❌ Query error: {e}")
     except Exception as e:

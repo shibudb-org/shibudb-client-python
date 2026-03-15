@@ -640,6 +640,30 @@ class ShibuDbClient:
 
         return self._send_query(query)
 
+    def delete_vector(self, vector_id: int, space: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Delete a vector by ID from a vector space
+
+        Args:
+            vector_id: ID of the vector to delete
+            space: Space name (uses current space if not specified)
+
+        Returns:
+            Response from server
+        """
+        space_name = space or self.current_space
+        if not space_name:
+            raise QueryError("No space selected. Use use_space() first or specify space parameter.")
+
+        query = {
+            "type": "DELETE_VECTOR",
+            "key": str(vector_id),
+            "space": space_name,
+            "user": self.current_user.get("username", "")
+        }
+
+        return self._send_query(query)
+
     def create_user(self, user: User) -> Dict[str, Any]:
         """
         Create a new user (admin only)
