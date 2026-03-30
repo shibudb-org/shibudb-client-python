@@ -103,7 +103,7 @@ def test_concurrent_operations():
             username="admin",
             password="admin",
             min_size=3,
-            max_size=8
+            max_size=50
         )
         
         def worker(worker_id):
@@ -129,8 +129,10 @@ def test_concurrent_operations():
                 return f"Worker {worker_id} failed: {e}"
         
         # Run concurrent workers
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [executor.submit(worker, i) for i in range(5)]
+        # NOTE: This is the high-load scenario reported by users (50 connections).
+        worker_count = 50
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = [executor.submit(worker, i) for i in range(worker_count)]
             
             results = []
             for future in as_completed(futures):
@@ -264,16 +266,23 @@ def test_pool_statistics():
         print(f"✓ Initial stats: {initial_stats}")
         
         # Use connections and check stats
-        connections = []
-        for i in range(3):
-            conn = pool.get_connection()
-            connections.append(conn)
-            stats = pool.get_stats()
-            print(f"✓ Stats after {i+1} connections: {stats}")
-        
-        # Return connections
-        for conn in connections:
-            conn.__exit__(None, None, None)
+        # NOTE: pool.get_connection() returns a contextmanager (generator-backed).
+        # We must enter/exit it properly; storing the contextmanager alone and calling
+        # __exit__ later without __enter__ leads to "generator didn't stop".
+        contexts = []
+        try:
+            for i in range(3):
+                ctx = pool.get_connection()
+                ctx.__enter__()
+                contexts.append(ctx)
+                stats = pool.get_stats()
+                print(f"✓ Stats after {i+1} connections: {stats}")
+        finally:
+            for ctx in contexts:
+                try:
+                    ctx.__exit__(None, None, None)
+                except Exception:
+                    pass
         
         final_stats = pool.get_stats()
         print(f"✓ Final stats: {final_stats}")

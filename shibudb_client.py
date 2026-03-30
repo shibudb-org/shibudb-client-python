@@ -288,6 +288,7 @@ class ShibuDbClient:
         self.socket = None
         self.reader = None
         self.writer = None
+        self._io_lock = threading.Lock()
         self.authenticated = False
         # Ensure current_user is always a safe dictionary to avoid attribute errors
         self.current_user = {"username": "", "role": "", "permissions": {}}
@@ -297,12 +298,21 @@ class ShibuDbClient:
     def _connect(self):
         """Establish connection to ShibuDb server"""
         try:
+            self.close()
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(self.timeout)
             self.socket.connect((self.host, self.port))
+            # Use file-like wrappers so we can safely read newline-delimited responses.
+            # The server protocol is line-based (client sends '\n' terminated JSON).
+            self.reader = self.socket.makefile("r", encoding="utf-8", newline="\n")
+            self.writer = self.socket.makefile("w", encoding="utf-8", newline="\n")
             logger.info(f"Connected to ShibuDb server at {self.host}:{self.port}")
         except Exception as e:
             raise ConnectionError(f"Failed to connect to ShibuDb server: {e}")
+
+    def _reconnect(self):
+        """Reconnect socket and reset stream wrappers."""
+        self._connect()
 
     def _send_query(self, query: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -314,22 +324,40 @@ class ShibuDbClient:
         Returns:
             Response dictionary from server
         """
-        try:
-            # Convert query to JSON and add newline
-            query_json = json.dumps(query) + '\n'
-            self.socket.send(query_json.encode('utf-8'))
+        # NOTE: A single recv() is not a message boundary. Under load, responses can be split
+        # across packets or multiple responses can coalesce. The protocol is newline-delimited,
+        # so we always read exactly one line for one response.
+        def _do_io() -> str:
+            if not self.socket or not self.reader or not self.writer:
+                self._reconnect()
+            query_json = json.dumps(query, separators=(",", ":")) + "\n"
+            self.writer.write(query_json)
+            self.writer.flush()
+            line = self.reader.readline()
+            if line == "":
+                # EOF -> server closed connection
+                raise ConnectionError("Server closed connection (EOF)")
+            return line.strip()
 
-            # Receive response
-            response = self.socket.recv(4096).decode('utf-8').strip()
-
+        with self._io_lock:
             try:
-                return json.loads(response, strict=False)
-            except json.JSONDecodeError:
-                # Handle non-JSON responses (like simple OK messages)
-                return {"status": "OK", "message": response}
+                response = _do_io()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, socket.timeout, OSError) as e:
+                # One reconnect attempt for transient socket failures.
+                logger.warning(f"Socket error, reconnecting once: {e}")
+                try:
+                    self._reconnect()
+                    response = _do_io()
+                except Exception as e2:
+                    raise QueryError(f"Failed to execute query after reconnect: {e2}") from e2
+            except Exception as e:
+                raise QueryError(f"Failed to execute query: {e}") from e
 
-        except Exception as e:
-            raise QueryError(f"Failed to execute query: {e}")
+        try:
+            return json.loads(response, strict=False)
+        except json.JSONDecodeError:
+            # Handle non-JSON responses (like simple OK messages)
+            return {"status": "OK", "message": response}
 
     def authenticate(self, username: str, password: str) -> Dict[str, Any]:
         """
@@ -793,8 +821,26 @@ class ShibuDbClient:
 
     def close(self):
         """Close the connection to the server"""
-        if self.socket:
-            self.socket.close()
+        try:
+            if self.writer:
+                try:
+                    self.writer.close()
+                except Exception:
+                    pass
+            if self.reader:
+                try:
+                    self.reader.close()
+                except Exception:
+                    pass
+            if self.socket:
+                try:
+                    self.socket.close()
+                except Exception:
+                    pass
+        finally:
+            self.socket = None
+            self.reader = None
+            self.writer = None
             logger.info("Connection closed")
 
     def __enter__(self):
