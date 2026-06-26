@@ -10,6 +10,7 @@ A comprehensive Python client for ShibuDb database that supports authentication,
 - 🔐 **Authentication & User Management**: Secure login with role-based access control
 - 🔑 **Key-Value Operations**: Traditional key-value storage with PUT, GET, DELETE operations
 - 🧮 **Vector Similarity Search**: Insert, get, delete, and search vectors with multiple index types and metrics
+- 🏷️ **Metadata Filtering**: Declare indexed metadata fields on a `Flat` vector space and pre-filter searches with a `Filter` builder or SQL-like `WHERE` string
 - 🗂️ **Space Management**: Create, delete, and manage different storage spaces
 - 🛡️ **Error Handling**: Comprehensive error handling with custom exceptions
 - 📊 **Connection Management**: Automatic connection handling with context managers
@@ -39,7 +40,7 @@ A comprehensive Python client for ShibuDb database that supports authentication,
 
 2. **Import the client**:
    ```python
-   from shibudb_client import ShibuDbClient, User, connect
+   from shibudb_client import ShibuDbClient, User, Filter, MetadataFieldSpec, connect
    ```
 
 ## Quick Start
@@ -123,6 +124,101 @@ client.get_vector(1)
 client.delete_vector(1)
 ```
 
+### Metadata Filtering (Flat spaces)
+
+Declare indexed metadata fields on a `Flat` vector space, attach metadata when
+inserting, and pre-filter searches so similarity is only computed over matching
+vectors. This is **only supported for the `Flat` index type**.
+
+```python
+from shibudb_client import ShibuDbClient, Filter
+
+with ShibuDbClient("localhost", 4444) as client:
+    client.authenticate("admin", "admin")
+
+    # 1. Declare indexed metadata fields at space creation (Flat only).
+    #    Field types: "string" | "int" | "float".
+    client.create_space(
+        "products",
+        engine_type="vector",
+        dimension=4,
+        index_type="Flat",
+        metric="L2",
+        indexed_metadata_fields={
+            "user_id": "string",
+            "category": "string",
+            "price": "float",
+            "year": "int",
+        },
+    )
+    client.use_space("products")
+
+    # 2. Attach metadata on insert (upsert: re-inserting an ID updates both
+    #    the vector and its metadata).
+    client.insert_vector(1, [0.1, 0.1, 0.1, 0.1],
+                         metadata={"user_id": "alice", "category": "books", "price": 12.5, "year": 2020})
+    client.insert_vector(2, [0.2, 0.2, 0.2, 0.2],
+                         metadata={"user_id": "bob", "category": "books", "price": 40, "year": 2022})
+    client.insert_vector(3, [0.15, 0.15, 0.15, 0.15],
+                         metadata={"user_id": "alice", "category": "toys", "price": 5, "year": 2023})
+
+    # 3a. Filtered search using the Filter builder.
+    f = (Filter.eq("user_id", "alice") | Filter.eq("user_id", "bob")) & Filter.lt("price", 40)
+    results = client.search_topk([0.1, 0.1, 0.1, 0.1], k=10, filter=f)
+
+    # 3b. ...or with a SQL-like WHERE string (mirrors the CLI --where syntax).
+    results = client.search_topk([0.1, 0.1, 0.1, 0.1], k=10,
+                                 where="(user_id=alice OR user_id=bob) AND price<40")
+
+    # Range search supports filtering too.
+    results = client.range_search([0.1, 0.1, 0.1, 0.1], radius=1.0, where="user_id=alice")
+```
+
+#### Building filters
+
+The `Filter` builder mirrors the server's filter operators:
+
+```python
+Filter.eq("user_id", "alice")          # field == value
+Filter.ne("user_id", "bob")            # field != value  (NOT eq)
+Filter.gt("price", 10)                 # > (numeric fields only)
+Filter.gte("price", 10)                # >=
+Filter.lt("price", 40)                 # <
+Filter.lte("price", 40)                # <=
+Filter.in_("category", ["books", "toys"])   # field IN (...)
+Filter.between("year", 2021, 2023)     # inclusive range (numeric fields only)
+
+# Compose with & (AND), | (OR), ~ (NOT), or the explicit helpers
+Filter.and_(a, b, c)
+Filter.or_(a, b)
+Filter.not_(a)
+combined = (Filter.eq("user_id", "alice") & Filter.gte("year", 2021)) | ~Filter.eq("category", "books")
+```
+
+#### WHERE string grammar
+
+`Filter.parse(...)` (and the `where=` argument) accept a SQL-like expression.
+Keywords (`AND`, `OR`, `NOT`, `IN`, `BETWEEN`) are case-insensitive:
+
+| Category | Syntax | Notes |
+|----------|--------|-------|
+| Equality | `field = value`, `field != value` | `!=` compiles to `NOT(field = value)` |
+| Comparison | `field > value`, `>=`, `<`, `<=` | numeric (`int`/`float`) fields only |
+| Membership | `field IN (v1, v2, ...)` | matches any listed value |
+| Range | `field BETWEEN low AND high` | inclusive; numeric fields only |
+| Composition | `AND`, `OR`, `NOT`, `( ... )` | parentheses for grouping |
+
+Bare words (`alice`) and quoted strings (`'alice'`, `"alice"`) are treated as
+strings; numeric literals (`40`, `12.5`) are numbers. Quote a numeric-looking
+string field value to force a string, e.g. `user_id='123'`.
+
+> **Notes & limits**
+> - Metadata filtering requires `index_type="Flat"`; declaring
+>   `indexed_metadata_fields` on a non-Flat space is rejected by the server.
+> - Filtering on an undeclared field returns an error from the server.
+> - Numeric values are stored as `float64`; integers larger than 2^53 may lose
+>   precision — use a `string` field for such identifiers.
+
 ## API Reference
 
 ### ShibuDbClient
@@ -140,7 +236,9 @@ client.authenticate(username: str, password: str) -> Dict[str, Any]
 #### Space Management
 ```python
 client.create_space(name: str, engine_type: str, dimension: Optional[int] = None, 
-                   index_type: str = "Flat", metric: str = "L2") -> Dict[str, Any]
+                   index_type: str = "Flat", metric: str = "L2",
+                   indexed_metadata_fields: Union[None, Dict[str, str], List] = None,
+                   enable_wal: Optional[bool] = None) -> Dict[str, Any]
 client.delete_space(name: str) -> Dict[str, Any]
 client.list_spaces() -> Dict[str, Any]
 client.use_space(name: str) -> Dict[str, Any]
@@ -155,12 +253,18 @@ client.delete(key: str, space: Optional[str] = None) -> Dict[str, Any]
 
 #### Vector Operations
 ```python
-client.insert_vector(vector_id: int, vector: List[float], space: Optional[str] = None) -> Dict[str, Any]
+client.insert_vector(vector_id: int, vector: List[float], space: Optional[str] = None,
+                     metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]
 client.get_vector(vector_id: int, space: Optional[str] = None) -> Dict[str, Any]
 client.delete_vector(vector_id: int, space: Optional[str] = None) -> Dict[str, Any]
-client.search_topk(query_vector: List[float], k: int = 1, space: Optional[str] = None) -> Dict[str, Any]
-client.range_search(query_vector: List[float], radius: float, space: Optional[str] = None) -> Dict[str, Any]
+client.search_topk(query_vector: List[float], k: int = 1, space: Optional[str] = None,
+                   filter: Union[None, Filter, Dict] = None, where: Optional[str] = None) -> Dict[str, Any]
+client.range_search(query_vector: List[float], radius: float, space: Optional[str] = None,
+                    filter: Union[None, Filter, Dict] = None, where: Optional[str] = None) -> Dict[str, Any]
 ```
+
+`metadata`, `filter`, and `where` are only supported on `Flat` vector spaces
+created with `indexed_metadata_fields`. See [Metadata Filtering](#metadata-filtering-flat-spaces).
 
 #### User Management (Admin Only)
 ```python
@@ -193,6 +297,31 @@ class SpaceInfo:
     dimension: Optional[int] = None
     index_type: Optional[str] = None
     metric: Optional[str] = None
+    indexed_metadata_fields: Optional[List[MetadataFieldSpec]] = None
+```
+
+#### MetadataFieldSpec
+```python
+@dataclass
+class MetadataFieldSpec:
+    name: str
+    type: str = "string"   # "string" | "int" | "float"
+```
+
+#### Filter
+Builder for metadata filter expressions. See
+[Building filters](#building-filters) and
+[WHERE string grammar](#where-string-grammar).
+
+```python
+Filter.eq(field, value); Filter.ne(field, value)
+Filter.gt(field, value); Filter.gte(field, value)
+Filter.lt(field, value); Filter.lte(field, value)
+Filter.in_(field, values); Filter.between(field, low, high)
+Filter.and_(*filters); Filter.or_(*filters); Filter.not_(f)
+Filter.parse(where_string)        # SQL-like WHERE -> Filter
+f.to_dict()                       # raw filter AST
+# operators: a & b, a | b, ~a
 ```
 
 ### Exceptions
@@ -202,6 +331,7 @@ class SpaceInfo:
 - `ConnectionError`: Raised when connection fails
 - `QueryError`: Raised when query execution fails
 - `PoolExhaustedError`: Raised when connection pool is exhausted
+- `FilterError`: Raised when a metadata filter expression is invalid
 
 ## Examples
 
@@ -416,8 +546,9 @@ except ConnectionError as e:
 
 ### Vector Engine
 - Vector operations: insert (`insert_vector`), get by ID (`get_vector`), delete by ID (`delete_vector`), and similarity search (`search_topk`, `range_search`)
+- **Metadata filtering** (`Flat` index only): declare `indexed_metadata_fields` at creation, attach `metadata` on insert, and pre-filter searches with a `Filter`/`where` expression
 - Multiple index types:
-    - **Flat**: Exact search (default)
+    - **Flat**: Exact search (default); the only index type that supports metadata filtering
     - **HNSW**: Hierarchical Navigable Small World
     - **IVF**: Inverted File Index
     - **IVF with PQ**: Product Quantization

@@ -11,7 +11,7 @@ This example demonstrates all the features of the ShibuDb Python client:
 
 import json
 import sys
-from shibudb_client import ShibuDbClient, User, ShibuDbError, AuthenticationError, ConnectionError, QueryError
+from shibudb_client import ShibuDbClient, User, Filter, ShibuDbError, AuthenticationError, ConnectionError, QueryError
 
 
 def print_response(response, operation=""):
@@ -241,6 +241,71 @@ def example_vector_operations(client):
         print(f"❌ Vector operation failed: {e}")
 
 
+def example_metadata_filtering(client):
+    """Example of metadata-filtered vector search (Flat index only)"""
+    print("\n🏷️ METADATA FILTERING EXAMPLE")
+    print("=" * 50)
+
+    try:
+        # Recreate the space cleanly so the example is repeatable.
+        client.delete_space("products_meta")
+    except QueryError:
+        pass
+
+    try:
+        # 1. Declare indexed metadata fields (Flat index required).
+        response = client.create_space(
+            "products_meta",
+            engine_type="vector",
+            dimension=4,
+            index_type="Flat",
+            metric="L2",
+            indexed_metadata_fields={
+                "user_id": "string",
+                "category": "string",
+                "price": "float",
+                "year": "int",
+            },
+        )
+        print_response(response, "Create Flat Space With Metadata Fields")
+
+        client.use_space("products_meta")
+
+        # 2. Attach metadata on insert.
+        rows = [
+            (1, [0.1, 0.1, 0.1, 0.1], {"user_id": "alice", "category": "books", "price": 12.5, "year": 2020}),
+            (2, [0.2, 0.2, 0.2, 0.2], {"user_id": "bob", "category": "books", "price": 40, "year": 2022}),
+            (3, [0.15, 0.15, 0.15, 0.15], {"user_id": "alice", "category": "toys", "price": 5, "year": 2023}),
+        ]
+        for vid, vec, meta in rows:
+            response = client.insert_vector(vid, vec, metadata=meta)
+            print_response(response, f"Insert Vector {vid} With Metadata")
+
+        query = [0.1, 0.1, 0.1, 0.1]
+
+        # 3a. Filter via the Filter builder.
+        f = (Filter.eq("user_id", "alice") | Filter.eq("user_id", "bob")) & Filter.lt("price", 40)
+        response = client.search_topk(query, k=10, filter=f)
+        print_response(response, "Filtered Search (Filter builder)")
+
+        # 3b. Filter via a SQL-like WHERE string.
+        response = client.search_topk(
+            query, k=10, where="(user_id=alice OR user_id=bob) AND price<40"
+        )
+        print_response(response, "Filtered Search (WHERE string)")
+
+        # 3c. Numeric range + IN.
+        response = client.search_topk(query, k=10, where="year BETWEEN 2021 AND 2023")
+        print_response(response, "Filtered Search (BETWEEN)")
+
+        # Range search supports filtering too.
+        response = client.range_search(query, radius=2.0, where="user_id=alice")
+        print_response(response, "Filtered Range Search")
+
+    except QueryError as e:
+        print(f"❌ Metadata filtering operation failed: {e}")
+
+
 def example_advanced_usage(client):
     """Example of advanced usage patterns"""
     print("\n🚀 ADVANCED USAGE EXAMPLE")
@@ -367,10 +432,13 @@ def main():
         # Example 5: Vector Operations
         example_vector_operations(client)
 
-        # Example 6: Advanced Usage
+        # Example 6: Metadata Filtering
+        example_metadata_filtering(client)
+
+        # Example 7: Advanced Usage
         example_advanced_usage(client)
 
-        # Example 7: Error Handling
+        # Example 8: Error Handling
         example_error_handling()
 
     finally:
